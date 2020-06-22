@@ -7,7 +7,7 @@ We provide a full VirtualBox image to install HOMI. This image contains 9 benchm
 ## Installing a Virtual Machine Image
 
 1. Download and install Oracle VM VirtualBox at [here](https://www.virtualbox.org/wiki/Downloads)
-2. Download the VM image: [FSE20_HOMI_artifacts.tar.gz](https://drive.google.com/file/d/12EbKiq5kYmYBz4LYsr5zca1x5taQ2Vp-/view?usp=sharing) 
+2. Download the VM image: [FSE20_HOMI_artifacts.tar.gz](https://drive.google.com/file/d/1ukvyUtVLJ0ie9knvsJKTe0Ww4K6U92H_/view?usp=sharing) 
 3. Install the `.vdi` file with VirtualBox.
 
 *NOTE:*
