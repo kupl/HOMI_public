@@ -1,4 +1,5 @@
 //===-- Executor.cpp ------------------------------------------------------===//
+
 //
 //                     The KLEE Symbolic Virtual Machine
 //
@@ -78,6 +79,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <assert.h>
 #include <cerrno>
 #include <cxxabi.h>
 #include <fstream>
@@ -87,9 +89,19 @@
 #include <string>
 #include <sys/mman.h>
 #include <vector>
+#include <iostream>
+#include <cstdlib>
+#include <chrono>
+#include <ctime>
+#include <numeric>
+#include <functional> 
+#include <unistd.h>
+
 
 using namespace llvm;
 using namespace klee;
+static int feature_id=0; // The number of features
+static int d_rwv=0;
 
 namespace klee {
 cl::OptionCategory DebugCat("Debugging options",
@@ -109,11 +121,37 @@ cl::OptionCategory
 
 cl::OptionCategory TestGenCat("Test generation options",
                               "These options impact test generation.");
+
+cl::OptionCategory PruningStates("Pruning States",
+                              "These options impact the number of candidate states.");
 } // namespace klee
 
 namespace {
 
 /*** Test generation options ***/
+cl::opt<bool> Homi(
+    "homi",
+    cl::init(false),
+    cl::desc("run Homi (default=false)"),
+    cl::cat(PruningStates));
+
+cl::opt<unsigned> ParallelNum(
+    "parallel",
+    cl::desc("When performing KLEE in parallel, denote i-th core. (default=0)"),
+    cl::init(0),
+    cl::cat(PruningStates));
+
+cl::opt<unsigned> Trial(
+    "trial",
+    cl::desc("The number of trials. (default=0)"),
+    cl::init(0),
+    cl::cat(PruningStates));
+
+cl::opt<std::string> DirName(
+    "dirname",
+    cl::desc("Specify a dir_name"),
+    cl::init("0101"),
+    cl::cat(PruningStates));
 
 cl::opt<bool> DumpStatesOnHalt(
     "dump-states-on-halt",
@@ -351,7 +389,6 @@ cl::opt<double> MaxStaticCPSolvePct(
              "instruction of a call path over total solving time for all "
              "instructions (default=1.0 (always))"),
     cl::cat(TerminationCat));
-
 
 /*** Debugging options ***/
 
@@ -2887,7 +2924,195 @@ void Executor::doDumpStates() {
   updateStates(nullptr);
 }
 
-void Executor::run(ExecutionState &initialState) {
+/*************************************Homi**************************************/
+std::map<std::string, unsigned> Executor::read_feature(std::string dirname, std::string naming){
+  std::map<std::string, unsigned> Feature_id; 
+  Feature_id.clear();
+  std::string f_name = dirname+"/"+naming+"tc_dir/"+naming+"feature_data";
+  feature_id=0; 
+  std::ifstream f_file(f_name);
+  if(!f_file.fail()){
+    std::string line;
+    while(!f_file.eof()){
+      getline(f_file,line);
+      Feature_id.insert(std::make_pair(line, feature_id));
+      feature_id++;
+    }
+    f_file.close();
+  }
+  else{
+    fprintf(stdout, "fail to open features_file\n"); 
+    exit(1);
+  }
+  feature_id--;
+
+  return Feature_id;
+}
+
+std::vector<unsigned> Executor::read_pruningratio(std::string dirname, std::string naming){
+  std::vector<unsigned> ratio_vec; 
+  ratio_vec.clear();
+  std::string p_name = dirname+"/"+naming+"tc_dir/"+naming+"pruning_ratio";
+  std::ifstream p_file(p_name);
+  if(!p_file.fail()){
+    std::string line;
+    int ratio=0;
+    while(!p_file.eof()){
+      getline(p_file,line);
+      if (!line.empty()){
+        ratio = std::stoi(line,nullptr);
+        ratio_vec.push_back(ratio);
+      }
+    }
+    p_file.close();
+  }
+  else{
+    fprintf(stdout, "fail to open pruning_ratio_file\n"); 
+    exit(1);
+  }
+  return ratio_vec;
+}
+
+std::vector<double> read_wvector(std::string dirname, std::string naming, std::string &wv_name){
+    std::string dir = "weights";
+	double weight;
+    std::vector<double> weights;
+    weights.clear();
+    std::string w_file=dirname+"/"+naming+"tc_dir/"+dir+"/"+wv_name;
+    std::ifstream win(w_file.c_str());
+    assert(win);
+	while (win >> weight) {
+      weights.push_back(weight);
+	}
+    return weights;
+}
+
+std::vector<std::vector<int>> Executor::extract_feature(const std::set<ExecutionState*> &states, 
+                                                         std::map<std::string, unsigned> &feat_id_map){
+
+  id_state_map_.clear();
+  std::vector<std::vector<int>> fv_vecs;
+  fv_vecs.clear();
+  int fv_size = states.size(); // The number of feature vectors == The number of states.
+  int feat_num = feature_id; // The number of features.
+  int **fv_array = new int*[fv_size]; // fv_array is 2-dimensional array, where the size is fv_size * feat_num.
+  for(int i= 0; i<fv_size; ++i) {
+    fv_array[i] = new int[feat_num];
+    memset(fv_array[i], 0, sizeof(int)*feat_num); 
+  }
+  
+  // In order to effectively generate feature vectors, we set the depth to 25, 
+  // where it denotes the number of constraints to consider in each path-condition. 
+  unsigned depth=25; 
+  int fidx=0;
+  
+  // transform each state a boolean array (feature vector).
+  for (auto it=states.begin(); it!=states.end(); ++it){
+    // *it = A state
+    
+    auto const_iterator=(*it)->constraints.begin();
+    if((*it)->constraints.size() <= depth)
+      const_iterator=(*it)->constraints.end();
+    else
+      const_iterator=(*it)->constraints.begin()+depth;
+    
+    for(auto it2=(*it)->constraints.begin(); it2!=const_iterator; ++it2){
+      // *it2 = A constraint
+      std::string Str;
+      llvm::raw_string_ostream aexpr(Str);
+      ExprPPrinter::printSingleExpr(aexpr, *it2);
+      std::string constraint_str = aexpr.str();
+      // check whether the constraint is in the set of features. 
+      if(feat_id_map.find(constraint_str) != feat_id_map.end()) {
+        unsigned fid = feat_id_map[constraint_str]; 
+        fv_array[fidx][fid]=1;
+      }
+    }
+    
+    id_state_map_[fidx]=*it;
+    fidx++;
+  }
+  
+  // If i-th feature value is the same as 0 or 1 for all states, the feature is redundant. Remove it.
+  std::vector<int> redundant_feats;
+  redundant_feats.clear();
+  for(int i=0; i<feat_num; i++){
+    int checker=0;
+    for(int j=0; j<fv_size; j++){
+      if(fv_array[0][i] !=fv_array[j][i]){
+        checker=1;
+        break;  
+      }
+    }
+    if (checker==0)
+      redundant_feats.push_back(i); 
+  }
+ 
+  // Transform each feature array in the feature vector. 
+  for (int i=0; i<fv_size; i++){
+    std::vector<int> fv; //fv = feature vector (e.g., <1 0 0 1 ... 0>
+    for(int j=0; j<feat_num; j++){
+      fv.push_back(fv_array[i][j]);
+    }
+    fv_vecs.push_back(fv);    
+  }
+
+  for(int i=0; i<fv_size; ++i) {
+    delete [] fv_array[i];
+  }
+  delete [] fv_array;
+  
+  fv_vecs.push_back(redundant_feats); 
+  return fv_vecs;  
+}
+
+bool desc(std::pair<double, int> a, std::pair<double, int> b){ 
+    return a.first > b.first;
+}
+
+int Executor::prune_states(std::string wv_name, 
+                           const std::vector<std::vector<int> > &fv_vecs, 
+                           std::vector<double>  &wvector, 
+                           int &pruning_ratio){
+  int d_wv= fv_vecs[0].size(); // d_wv = weigth vector dimension = the number of features
+  std::vector<int> rfeat_vec = fv_vecs[fv_vecs.size()-1]; //redundant_feature_idxs
+  d_rwv=rfeat_vec.size(); // d_rwv= The number of redundant features
+ 
+  // We don't prune states when the dimension of feature vector is too small. 
+  if ((d_wv-d_rwv) <=5)
+      return -1;
+  
+  // maintain pruning_ratio and redundant features for each testcase. 
+  std::string learning_data= "rfeats: ";
+  for(int i=0; i<(int)rfeat_vec.size(); i++){
+       learning_data.append(std::to_string(rfeat_vec[i])); 
+       learning_data.append(" ");
+  }
+  learning_data.append("\n"); 
+  learning_data.append("pratio: "+std::to_string(pruning_ratio)+"\n"); 
+  learning_data.append("wvector: "+wv_name+"\n"); 
+     
+  std::vector< std::pair<double, int> > score_vector;
+  
+  for(int i=0; i<(int)fv_vecs.size()-1; i++){
+    std::vector<int> fv=fv_vecs[i];
+    double score = std::inner_product(fv.begin(), fv.end(),  wvector.begin(), 0.0); 
+    score_vector.push_back(std::pair<double, int>(score, i));
+  }  
+  
+  std::sort(score_vector.begin(), score_vector.end(), desc);
+  int pruned_state_num=(int)((fv_vecs.size()-1)*pruning_ratio)/100;
+  for(int i=0; i<pruned_state_num; i++){
+    int state_id=score_vector.back().second;
+    score_vector.pop_back();
+    terminateStateEarly(*id_state_map_[state_id], learning_data);
+  }
+  return pruned_state_num;
+}
+/*******************************************************************************/
+
+
+void Executor::run(ExecutionState &initialState, std::string naming, std::string dirname, std::string trial) {
   bindModuleConstants();
 
   // Delay init till now so that ticks don't accrue during
@@ -2970,8 +3195,56 @@ void Executor::run(ExecutionState &initialState) {
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
   searcher->update(0, newStates, std::vector<ExecutionState *>());
-
+  
+  /*************************************Homi**************************************/
+  int prev_time=0;
+  int trial_idx=0;
+  int time_cycle=30; //For every 30 seconds, the pruning strategy is performed.
+  if(Homi){ 
+    //// Generate a set of features. ////
+    feat_id_map_=read_feature(dirname, naming);
+    pratio_vec_=read_pruningratio(dirname, naming);
+  }
+  
+  FILE *mf = fopen("state_data", "a");
+  fprintf(mf, "cand state_size: "); 
+  fclose(mf);
+  
+  auto start_time = std::chrono::system_clock::now();
   while (!states.empty() && !haltExecution) {
+    auto end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end-start_time;
+    int elapsed_time = (int)elapsed_seconds.count();
+
+    if (elapsed_time >= prev_time){
+      //// Store the number of total states every second. ////
+      state_size_vec_.push_back(states.size());
+      
+      mf = fopen("state_data", "a");
+      fprintf(mf, "%lu ", states.size());
+      fclose(mf);
+      
+      prev_time++;
+      std::vector<std::vector<int>> fv_vecs;
+      
+      if(Homi && prev_time>=time_cycle && states.size()>500){
+        std::vector<std::vector<int>> fv_vecs;
+        //// Obtain the weight vector for the state-pruning. ////
+        std::string wv_name=trial+"trials/"+std::to_string(trial_idx+1)+".w";
+        wvector_ = read_wvector(dirname, naming, wv_name);
+        
+        //// Transform each state from a feature vector ////
+        fv_vecs = extract_feature(states, feat_id_map_);
+        
+        //// Prune a set of states based on weight vector and pruning ratio ////
+        int pruning_ratio = pratio_vec_[trial_idx];
+        prune_states(wv_name, fv_vecs, wvector_, pruning_ratio); 
+      
+        trial_idx++;
+        time_cycle=time_cycle+30;
+      }
+    }
+    /*******************************************************************************/
     ExecutionState &state = searcher->selectState();
     KInstruction *ki = state.pc;
     stepInstruction(state);
@@ -2985,8 +3258,18 @@ void Executor::run(ExecutionState &initialState) {
   }
 
   delete searcher;
-  searcher = 0;
-
+  searcher = 0; 
+  mf = fopen("state_data", "a");
+  fprintf(mf, "\n"); 
+  fclose(mf); 
+  /*
+  FILE *mf = fopen("state_data", "a");
+  fprintf(mf, "cand state_size: "); 
+  for (unsigned i=0; i<state_size_vec_.size(); i++)
+      fprintf(mf, "%d ", state_size_vec_[i]);
+  fprintf(mf, "\n"); 
+  fclose(mf); 
+  */
   doDumpStates();
 }
 
@@ -3771,7 +4054,10 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
 void Executor::runFunctionAsMain(Function *f,
 				 int argc,
 				 char **argv,
-				 char **envp) {
+				 char **envp,
+                 std::string naming,
+                 std::string dirname,
+                 std::string trial) {
   std::vector<ref<Expr> > arguments;
 
   // force deterministic initialization of memory objects
@@ -3861,7 +4147,7 @@ void Executor::runFunctionAsMain(Function *f,
 
   processTree = new PTree(state);
   state->ptreeNode = processTree->root;
-  run(*state);
+  run(*state, naming, dirname, trial);
   delete processTree;
   processTree = 0;
 

@@ -132,7 +132,10 @@ public:
   virtual void runFunctionAsMain(llvm::Function *f,
                                  int argc,
                                  char **argv,
-                                 char **envp) = 0;
+                                 char **envp,
+                                 std::string naming,
+                                 std::string dirname,
+                                 std::string trial) = 0;
 
   /*** Runtime options ***/
 

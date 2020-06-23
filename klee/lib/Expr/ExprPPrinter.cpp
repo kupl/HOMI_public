@@ -381,14 +381,17 @@ public:
       printConst(CE, PC, printConstWidth);
     else {
       std::map<ref<Expr>, unsigned>::iterator it = bindings.find(e);
+      /*
       if (it!=bindings.end()) {
         PC << 'N' << it->second;
-      } else {
+      } 
+      */
+      /*
         if (!hasScan || shouldPrint.count(e)) {
           PC << 'N' << counter << ':';
           bindings.insert(std::make_pair(e, counter++));
         }
-
+      */
         // Detect multibyte reads.
         // FIXME: Hrm. One problem with doing this is that we are
         // masking the sharing of the indices which aren't
@@ -427,7 +430,6 @@ public:
 	else
           printExpr(e.get(), PC, indent);	
         PC << ")";
-      }
     }
   }
 
@@ -437,7 +439,8 @@ public:
     if (simple || forceNoLineBreaks) {
       PC << ' ';
     } else {
-      PC.breakLine(indent);
+      PC << ' ';
+      //PC.breakLine(indent);
     }
   }
 };
@@ -533,6 +536,7 @@ void ExprPPrinter::printQuery(llvm::raw_ostream &os,
   }
 
   PC << "(query [";
+  PC.breakLine();
   
   // Ident at constraint list;
   unsigned indent = PC.pos;
@@ -543,6 +547,7 @@ void ExprPPrinter::printQuery(llvm::raw_ostream &os,
     if (it != ie)
       PC.breakLine(indent);
   }
+  PC.breakLine();
   PC << ']';
 
   p.printSeparator(PC, constraints.empty(), indent-1);
