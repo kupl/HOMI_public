@@ -1,0 +1,8 @@
+{
+"pgm_name": "enscript",
+"pgm_dir": "../benchmarks/enscript-1.6.6/obj-llvm/",
+"exec_dir": "/src",
+"gcov_path": "../benchmarks/enscript-1.6.6/1obj-gcov/src/",
+"gcov_file": "../*/*.gcov",
+"gcda_file": "../*/*.gcda"
+}

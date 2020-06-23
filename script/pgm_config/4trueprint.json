@@ -1,0 +1,8 @@
+{
+"pgm_name": "trueprint",
+"pgm_dir": "../benchmarks/trueprint-5.4/obj-llvm/",
+"exec_dir": "/src",
+"gcov_path": "../benchmarks/trueprint-5.4/4obj-gcov/src/",
+"gcov_file": "../*/*.gcov",
+"gcda_file": "../*/*.gcda"
+}

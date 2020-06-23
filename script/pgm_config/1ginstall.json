@@ -1,0 +1,8 @@
+{
+"pgm_name": "ginstall",
+"pgm_dir": "../benchmarks/coreutils-8.31/obj-llvm/",
+"exec_dir": "/src",
+"gcov_path": "../benchmarks/coreutils-8.31/1ginstall-gcov/src/",
+"gcov_file": "../*/*.gcov",
+"gcda_file": "../*/*.gcda"
+}

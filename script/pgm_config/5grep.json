@@ -1,0 +1,8 @@
+{
+"pgm_name": "grep",
+"pgm_dir": "../benchmarks/grep-2.6/obj-llvm/",
+"exec_dir": "/src",
+"gcov_path": "../benchmarks/grep-2.6/5obj-gcov/src/",
+"gcov_file": "../*/*.gcov",
+"gcda_file": "../*/*.gcda"
+}

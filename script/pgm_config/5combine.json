@@ -1,0 +1,8 @@
+{
+"pgm_name": "combine",
+"pgm_dir": "../benchmarks/combine-0.4.0/obj-llvm/",
+"exec_dir": "/src",
+"gcov_path": "../benchmarks/combine-0.4.0/5obj-gcov/src/",
+"gcov_file": "../*/*.gcov",
+"gcda_file": "../*/*.gcda"
+}
