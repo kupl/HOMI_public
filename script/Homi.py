@@ -246,7 +246,7 @@ def Feature_Extractor(pgm, stgy, dir_name, topk_testcases, ith_trial, iters):
     Symbolic_arg="arg"
     Nonsymbolic_arg="const_arr"
     Eq_expr="Eq"
-    Neq_expr="Eq false"
+    Neq_expr="false"
     
     for tc in topk_testcases:
         tc_dir=tc.split('/')[0]
