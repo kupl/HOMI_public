@@ -1,4 +1,5 @@
 # HOMI
+<img src= "./img/homi_logo.png" width="200" height="200"> 
 
 HOMI is a tool that performs symbolic execution while maintaining only a small number of **promising states**  via online learning. This tool is implemented on the top of [KLEE][klee], a publicly available symbolic execution tool for testing C programs. For more technical details, please read our [paper](./FSE20.pdf).
 
